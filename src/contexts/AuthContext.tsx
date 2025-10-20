@@ -1,5 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User } from '@/types';
+import { apiService } from '@/services/api';
 
 interface AuthContextType {
   user: User | null;
@@ -47,7 +48,7 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       }
     }
 
-    // Initialize demo users if none exist
+    // Initialize demo users locally if none exist (offline demo fallback)
     const existingUsers = localStorage.getItem('genzed_users');
     if (!existingUsers) {
       const demoUsers = [
@@ -91,26 +92,28 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const login = async (email: string, password: string) => {
     setLoading(true);
     try {
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Check if user exists in localStorage (simulated database)
-      const users = JSON.parse(localStorage.getItem('genzed_users') || '[]');
-      const user = users.find((u: any) => u.email === email && u.password === password);
-
-      if (!user) {
-        throw new Error('Invalid email or password');
+      // Try backend login first
+      const resp = await apiService.login(email, password);
+      const { user: userResp, token } = resp;
+      // store token for apiService
+      localStorage.setItem('genzed_token', token);
+      localStorage.setItem('genzed_user', JSON.stringify(userResp));
+      setUser(userResp);
+      return { success: true, user: userResp };
+    } catch (err) {
+      // Fallback to local demo users if backend unavailable or login fails
+      try {
+        const users = JSON.parse(localStorage.getItem('genzed_users') || '[]');
+        const found = users.find((u: any) => u.email === email && u.password === password);
+        if (!found) throw err;
+        const { password: _, ...userWithoutPassword } = found;
+        setUser(userWithoutPassword);
+        localStorage.setItem('genzed_user', JSON.stringify(userWithoutPassword));
+        return { success: true, user: userWithoutPassword };
+      } catch (fallbackErr) {
+        console.error('Login error:', err);
+        throw err;
       }
-
-      // Remove password from user object before storing
-      const { password: _, ...userWithoutPassword } = user;
-      setUser(userWithoutPassword);
-      localStorage.setItem('genzed_user', JSON.stringify(userWithoutPassword));
-
-      return { success: true, user: userWithoutPassword };
-    } catch (error) {
-      console.error('Login error:', error);
-      throw error;
     } finally {
       setLoading(false);
     }
@@ -119,40 +122,36 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const register = async (userData: RegisterData) => {
     setLoading(true);
     try {
-      // Simulate API call delay
-      await new Promise(resolve => setTimeout(resolve, 1000));
-
-      // Get existing users
-      const users = JSON.parse(localStorage.getItem('genzed_users') || '[]');
-
-      // Check if user already exists
-      const existingUser = users.find((u: any) => u.email === userData.email);
-      if (existingUser) {
-        throw new Error('User with this email already exists');
+      // Try backend register first
+      const resp = await apiService.register(userData);
+      const { user: userResp, token } = resp;
+      localStorage.setItem('genzed_token', token);
+      localStorage.setItem('genzed_user', JSON.stringify(userResp));
+      setUser(userResp);
+      return { success: true, user: userResp };
+    } catch (err) {
+      // Fallback to local demo registration
+      try {
+        const users = JSON.parse(localStorage.getItem('genzed_users') || '[]');
+        const existingUser = users.find((u: any) => u.email === userData.email);
+        if (existingUser) throw new Error('User with this email already exists');
+        const newUser = {
+          id: Date.now().toString(),
+          ...userData,
+          createdAt: new Date(),
+          isActive: true,
+          avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userData.name}`
+        };
+        users.push(newUser);
+        localStorage.setItem('genzed_users', JSON.stringify(users));
+        const { password: _, ...userWithoutPassword } = newUser;
+        setUser(userWithoutPassword);
+        localStorage.setItem('genzed_user', JSON.stringify(userWithoutPassword));
+        return { success: true, user: userWithoutPassword };
+      } catch (fallbackErr) {
+        console.error('Registration error:', err);
+        throw err;
       }
-
-      // Create new user
-      const newUser = {
-        id: Date.now().toString(),
-        ...userData,
-        createdAt: new Date(),
-        isActive: true,
-        avatar: `https://api.dicebear.com/7.x/avataaars/svg?seed=${userData.name}`
-      };
-
-      // Save to "database"
-      users.push(newUser);
-      localStorage.setItem('genzed_users', JSON.stringify(users));
-
-      // Set current user (remove password)
-      const { password: _, ...userWithoutPassword } = newUser;
-      setUser(userWithoutPassword);
-      localStorage.setItem('genzed_user', JSON.stringify(userWithoutPassword));
-
-      return { success: true, user: userWithoutPassword };
-    } catch (error) {
-      console.error('Registration error:', error);
-      throw error;
     } finally {
       setLoading(false);
     }
